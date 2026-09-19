@@ -205,3 +205,7 @@ TypeSafe docs: [index](https://docs.typesafe.ai/llms.txt) ·
 [primitives](https://docs.typesafe.ai/primitives) ·
 [confidence](https://docs.typesafe.ai/confidence) ·
 [HTTP API](https://docs.typesafe.ai/api)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

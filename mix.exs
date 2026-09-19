@@ -11,6 +11,10 @@ defmodule TypeSafe.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: "An Elixir client for TypeSafe's System One API (Jev).",
+      package: [
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/phiat/typesafe-elixir-sdk"}
+      ],
       docs: [main: "TypeSafe", extras: ["README.md"]]
     ]
   end

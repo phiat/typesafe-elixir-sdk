@@ -2,6 +2,7 @@ defmodule TypeSafe.MixProject do
   use Mix.Project
 
   @version "0.1.0"
+  @source_url "https://github.com/phiat/typesafe-elixir-sdk"
 
   def project do
     [
@@ -10,12 +11,15 @@ defmodule TypeSafe.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      description: "An Elixir client for TypeSafe's System One API (Jev).",
+      description:
+        "Unofficial Elixir client for TypeSafe's System One API (Jev): " <>
+          "typed Noul, Choice and Score judgments over Req.",
+      source_url: @source_url,
       package: [
         licenses: ["MIT"],
-        links: %{"GitHub" => "https://github.com/phiat/typesafe-elixir-sdk"}
+        links: %{"GitHub" => @source_url, "TypeSafe docs" => "https://docs.typesafe.ai/"}
       ],
-      docs: [main: "TypeSafe", extras: ["README.md"]]
+      docs: [main: "TypeSafe", extras: ["README.md", "LICENSE"], source_ref: "v#{@version}"]
     ]
   end
 
@@ -28,7 +32,8 @@ defmodule TypeSafe.MixProject do
       {:req, "~> 0.5 or ~> 0.7"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      {:plug, "~> 1.15", only: :test}
+      {:plug, "~> 1.15", only: :test},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]
   end
 end

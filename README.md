@@ -48,7 +48,7 @@ That is a real response from `jev-1.13.0`.
 
 ```elixir
 def deps do
-  [{:typesafe_ex, github: "phiat/typesafe-elixir-sdk"}]
+  [{:typesafe_ex, "~> 0.1"}]
 end
 ```
 

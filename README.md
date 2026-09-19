@@ -1,4 +1,4 @@
-# TypeSafe for Elixir
+# TypeSafe System One API for Elixir
 
 An Elixir client for [TypeSafe](https://docs.typesafe.ai/)'s System One API, the API
 behind **Jev**. It is unofficial and not published by TypeSafe. Its behaviour follows

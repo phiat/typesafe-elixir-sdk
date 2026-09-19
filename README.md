@@ -1,5 +1,10 @@
 # TypeSafe System One API for Elixir
 
+[![Hex.pm](https://img.shields.io/hexpm/v/typesafe_ex.svg)](https://hex.pm/packages/typesafe_ex)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-8e7ce6.svg)](https://hexdocs.pm/typesafe_ex)
+[![Elixir](https://img.shields.io/badge/elixir-~%3E%201.15-4e2a8e.svg)](https://github.com/phiat/typesafe-elixir-sdk/blob/main/mix.exs)
+[![License: MIT](https://img.shields.io/hexpm/l/typesafe_ex.svg)](LICENSE)
+
 An Elixir client for [TypeSafe](https://docs.typesafe.ai/)'s System One API, the API
 behind **Jev**. It is unofficial and not published by TypeSafe. Its behaviour follows
 the official Python SDK:

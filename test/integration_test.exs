@@ -44,10 +44,65 @@ defmodule TypeSafe.IntegrationTest do
     assert Map.keys(response.answers.urgency.legend) == [0, 1, 2]
   end
 
+  test "locates a rectangle in a PNG", %{client: client} do
+    photo = TypeSafe.Image.from_file!(fixture("red-rectangle.png"))
+
+    response =
+      TypeSafe.system_one!(
+        client,
+        %{photo: photo},
+        %{
+          present: TypeSafe.noul("Is there a red rectangle in `photo`?"),
+          rect: TypeSafe.box("The red rectangle in `photo`")
+        },
+        # A Box question needs jev-1.14.0 (or jev-preview); jev-latest was 1.13.
+        model: "jev-1.14.0",
+        images: [photo]
+      )
+
+    assert response.model == "jev-1.14.0"
+    assert TypeSafe.NoulAnswer.yes?(response.answers.present)
+
+    %TypeSafe.BoxAnswer{} = rect = response.answers.rect
+    assert rect.left < rect.right and rect.top < rect.bottom
+
+    # The rectangle is at left 0.5, right 0.9, top 0.2, bottom 0.5.
+    for {edge, want} <- [left: 0.5, right: 0.9, top: 0.2, bottom: 0.5] do
+      assert_in_delta Map.fetch!(rect, edge), want, 0.15
+    end
+
+    assert rect.confidence > 0.5
+  end
+
+  test "reads a JPEG on the default model", %{client: client} do
+    photo = TypeSafe.Image.from_file!(fixture("red-rectangle.jpg"))
+
+    response =
+      TypeSafe.system_one!(
+        client,
+        %{photo: photo},
+        %{red: TypeSafe.noul("Does `photo` contain a red shape?")},
+        images: [photo]
+      )
+
+    assert TypeSafe.NoulAnswer.yes?(response.answers.red)
+  end
+
+  test "accepts the long-context header", %{client: client} do
+    response =
+      TypeSafe.system_one!(client, "Hello there!", %{hello: TypeSafe.noul("Is this a greeting?")},
+        long_context: true
+      )
+
+    assert TypeSafe.NoulAnswer.yes?(response.answers.hello)
+  end
+
   test "a bad key is an authentication error" do
     assert {:error, %TypeSafe.Error{reason: :authentication, status: 401}} =
              TypeSafe.system_one(TypeSafe.new(api_key: "not-a-key"), "text", %{
                q: TypeSafe.noul("Is it?")
              })
   end
+
+  defp fixture(name), do: Path.join([__DIR__, "fixtures", name])
 end

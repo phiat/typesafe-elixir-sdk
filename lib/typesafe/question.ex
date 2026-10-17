@@ -48,12 +48,31 @@ defmodule TypeSafe.Score do
   @type t :: %__MODULE__{instructions: TypeSafe.json(), criteria: [TypeSafe.json()]}
 end
 
+defmodule TypeSafe.Box do
+  @moduledoc """
+  A question that locates something in an image. The answer is a
+  `TypeSafe.BoxAnswer`: the box's four edges, as fractions of the image.
+
+  Build one with `TypeSafe.box/1`. It needs an image (see `TypeSafe.Image`) and
+  `jev-1.14.0` or later, or `jev-preview`.
+  """
+
+  @enforce_keys [:instructions]
+  defstruct [:instructions]
+
+  @type t :: %__MODULE__{instructions: TypeSafe.json()}
+end
+
 defmodule TypeSafe.Question do
   @moduledoc false
   # Building, validating and encoding questions. Validation raises ArgumentError:
   # a malformed question is a programming error, not a runtime condition.
 
-  alias TypeSafe.{Choice, Noul, Score}
+  alias TypeSafe.{Box, Choice, Noul, Score}
+
+  # What the API takes in one question.
+  @max_choice_options 255
+  @max_score_levels 10
 
   def noul(instructions, criteria) do
     check_instructions!(instructions)
@@ -86,6 +105,12 @@ defmodule TypeSafe.Question do
       end)
 
     if options == [], do: raise(ArgumentError, "a Choice needs at least one option")
+
+    if length(options) > @max_choice_options do
+      raise ArgumentError,
+            "a Choice takes at most #{@max_choice_options} options, got: #{length(options)}"
+    end
+
     check_unique!(Enum.map(options, &elem(&1, 0)), "Choice options")
     %Choice{instructions: instructions, criteria: options}
   end
@@ -95,6 +120,11 @@ defmodule TypeSafe.Question do
 
     if length(levels) < 2 do
       raise ArgumentError, "a Score needs at least two levels, got: #{length(levels)}"
+    end
+
+    if length(levels) > @max_score_levels do
+      raise ArgumentError,
+            "a Score takes at most #{@max_score_levels} levels, got: #{length(levels)}"
     end
 
     %Score{
@@ -107,6 +137,11 @@ defmodule TypeSafe.Question do
     raise ArgumentError, "Score levels must be a list, got: #{inspect(levels)}"
   end
 
+  def box(instructions) do
+    check_instructions!(instructions)
+    %Box{instructions: instructions}
+  end
+
   @doc false
   # Validates a questions map and returns it as [{original_key, question}].
   def check_all!(questions) when is_map(questions) and map_size(questions) > 0 do
@@ -116,7 +151,7 @@ defmodule TypeSafe.Question do
       {key, _question} when not (is_atom(key) or is_binary(key)) ->
         raise ArgumentError, "question ids must be atoms or strings, got: #{inspect(key)}"
 
-      {_key, %struct{}} when struct in [Noul, Choice, Score] ->
+      {_key, %struct{}} when struct in [Noul, Choice, Score, Box] ->
         :ok
 
       {_key, %{} = raw} when is_map_key(raw, "type") or is_map_key(raw, :type) ->
@@ -124,7 +159,7 @@ defmodule TypeSafe.Question do
 
       {key, other} ->
         raise ArgumentError,
-              "question #{inspect(key)} must be built with TypeSafe.noul/2, choice/2 or score/2 " <>
+              "question #{inspect(key)} must be built with TypeSafe.noul/2, choice/2, score/2 or box/1 " <>
                 "(or be a raw map with a \"type\"), got: #{inspect(other)}"
     end)
 
@@ -158,7 +193,14 @@ defmodule TypeSafe.Question do
   def to_json(%Score{instructions: instructions, criteria: levels}),
     do: %{"type" => "score", "instructions" => instructions, "criteria" => levels}
 
+  def to_json(%Box{instructions: instructions}),
+    do: %{"type" => "box", "instructions" => instructions}
+
   def to_json(%{} = raw), do: raw
+
+  @doc false
+  def box?(questions),
+    do: Enum.any?(questions, fn {_key, question} -> match?(%Box{}, question) end)
 
   defp check_instructions!(instructions) do
     valid? =

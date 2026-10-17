@@ -11,6 +11,7 @@ defmodule TypeSafe do
   | `noul/2` | whether a condition holds | `TypeSafe.NoulAnswer` - probability of yes |
   | `choice/2` | which one of a defined set | `TypeSafe.ChoiceAnswer` - option, probabilities, confidence |
   | `score/2` | how far along described levels | `TypeSafe.ScoreAnswer` - weighted level, probabilities, confidence |
+  | `box/1` | where something is in an image (`TypeSafe.Image`) | `TypeSafe.BoxAnswer` - the box's four edges, as fractions |
 
       client = TypeSafe.new()
 
@@ -47,7 +48,7 @@ defmodule TypeSafe do
       `[plug: {Req.Test, MyApp.TypeSafe}]` in tests
   """
 
-  alias TypeSafe.{Client, Error, Model, Question, Response}
+  alias TypeSafe.{Client, Error, Image, Model, Question, Response}
 
   @typedoc "Anything that encodes to JSON: strings, numbers, booleans, nil, lists and maps."
   @type json ::
@@ -60,7 +61,11 @@ defmodule TypeSafe do
 
   @type questions :: %{
           (atom() | String.t()) =>
-            TypeSafe.Noul.t() | TypeSafe.Choice.t() | TypeSafe.Score.t() | map()
+            TypeSafe.Noul.t()
+            | TypeSafe.Choice.t()
+            | TypeSafe.Score.t()
+            | TypeSafe.Box.t()
+            | map()
         }
 
   @doc """
@@ -122,6 +127,36 @@ defmodule TypeSafe do
   def score(instructions, levels), do: Question.score(instructions, levels)
 
   @doc """
+  A question that locates something in an image. The answer is a
+  `TypeSafe.BoxAnswer`: the box's `top`, `bottom`, `left` and `right` edges, as
+  fractions of the image.
+
+      photo = TypeSafe.Image.from_file!("kitchen.jpg")
+
+      TypeSafe.system_one(
+        client,
+        %{photo: photo},
+        %{
+          mug_present: TypeSafe.noul("Is there a coffee mug in `photo`?"),
+          mug: TypeSafe.box("The coffee mug in `photo`")
+        },
+        model: "jev-1.14.0",
+        images: [photo]
+      )
+
+  `instructions` says what to find: a phrase, not a yes/no question. Name the image
+  by its key in the state, in backticks, or put the `TypeSafe.Image` in the
+  instructions.
+
+  A Box question needs `jev-1.14.0` or later, or `jev-preview`. Older models, and
+  `jev-latest` while it still points at one, reject it with a plain 400. It always
+  answers with a box, even when the target is absent, so ask a `noul/2` about
+  presence in the same call and ignore the box when that comes back low.
+  """
+  @spec box(json()) :: TypeSafe.Box.t()
+  def box(instructions), do: Question.box(instructions)
+
+  @doc """
   Asks `questions` about `state` in one request.
 
   `state` is a string, or a map or list for structured context. Questions can
@@ -134,6 +169,14 @@ defmodule TypeSafe do
 
     * `:model` - overrides the client's model for this call
     * `:timeout`, `:retry`, `:headers` - override the client's for this call
+    * `:images` - a list of `TypeSafe.Image` to send with the call. Something in the
+      state or the questions has to refer to each one, and every reference has to
+      be attached here; otherwise `ArgumentError` is raised before anything is
+      sent. A `box/1` question needs one. The images header the API requires is
+      added for you, and the request goes out as `multipart/form-data`.
+    * `:long_context` - `true` raises the per-request and per-question context
+      limits from 64k to 262k tokens. The price per token is the same, but the
+      model is slower and less accurate, so use it only when the state doesn't fit.
     * `:extra_body` - extra top-level request fields, for API features this client
       predates
 
@@ -144,11 +187,31 @@ defmodule TypeSafe do
           {:ok, Response.t()} | {:error, Error.t()}
   def system_one(%Client{} = client, state, questions, opts \\ []) do
     pairs = Question.check_all!(questions)
-    opts = Keyword.validate!(opts, [:model, :extra_body, :timeout, :retry, :headers])
+
+    opts =
+      Keyword.validate!(opts, [
+        :model,
+        :extra_body,
+        :timeout,
+        :retry,
+        :headers,
+        :long_context,
+        images: []
+      ])
 
     if state in [nil, ""] do
       raise ArgumentError, "state must be a non-empty string, map or list"
     end
+
+    questions_json =
+      Map.new(pairs, fn {key, question} -> {to_string(key), Question.to_json(question)} end)
+
+    images =
+      Image.check_all!(
+        opts[:images],
+        Jason.encode!([state, questions_json]),
+        Question.box?(pairs)
+      )
 
     body =
       opts
@@ -157,11 +220,12 @@ defmodule TypeSafe do
       |> Map.merge(%{
         "state" => state,
         "model" => opts[:model] || client.model,
-        "questions" =>
-          Map.new(pairs, fn {key, question} -> {to_string(key), Question.to_json(question)} end)
+        "questions" => questions_json
       })
+      |> put_assets(images)
 
-    with {:ok, body, request_id} <- Client.request(client, :post, "/v1/systemone", body, opts) do
+    with {:ok, body, request_id} <-
+           Client.request(client, :post, "/v1/systemone", body, request_opts(opts, images)) do
       case Response.decode(body, pairs, request_id) do
         {:ok, response} -> {:ok, response}
         {:error, field} -> {:error, invalid_response(field, body, request_id)}
@@ -180,7 +244,7 @@ defmodule TypeSafe do
 
   @doc """
   The model names the account can send, aliases included. Versioned ids such as
-  `"jev-1.13.0"` are accepted whether or not they are listed.
+  `"jev-1.14.0"` are accepted whether or not they are listed.
   """
   @spec models(Client.t()) :: {:ok, [Model.t()]} | {:error, Error.t()}
   def models(%Client{} = client) do
@@ -202,6 +266,44 @@ defmodule TypeSafe do
       {:ok, models} -> models
       {:error, error} -> raise error
     end
+  end
+
+  # Each image is listed once under its reference, naming the multipart part that
+  # holds it. Without images, an `assets` entry in `:extra_body` is left alone.
+  defp put_assets(body, []), do: body
+
+  defp put_assets(body, images) do
+    assets =
+      images
+      |> Enum.with_index()
+      |> Map.new(fn {image, index} ->
+        {image.reference, %{"type" => "image", "part" => Image.part_name(index)}}
+      end)
+
+    Map.put(body, "assets", assets)
+  end
+
+  # What the client needs to send it: the headers the API wants for images and long
+  # context (ahead of the caller's, so theirs win), and the images as file parts.
+  defp request_opts(opts, images) do
+    defaults =
+      if(images == [], do: [], else: [{"typesafe-danger-zone-images", "true"}]) ++
+        if opts[:long_context], do: [{"typesafe-danger-zone-long-context", "true"}], else: []
+
+    files =
+      images
+      |> Enum.with_index()
+      |> Enum.map(fn {image, index} ->
+        name = Image.part_name(index)
+
+        {name,
+         {image.binary,
+          filename: "#{name}.#{Image.extension(image)}", content_type: Image.content_type(image)}}
+      end)
+
+    opts
+    |> Keyword.put(:headers, defaults ++ Enum.to_list(Keyword.get(opts, :headers, [])))
+    |> Keyword.put(:multipart, if(files == [], do: nil, else: files))
   end
 
   defp decode_models(raw) do

@@ -76,13 +76,45 @@ defmodule TypeSafe.ScoreAnswer do
   end
 end
 
+defmodule TypeSafe.BoxAnswer do
+  @moduledoc """
+  The answer to a `TypeSafe.Box`: where something is in an image.
+
+  The edges are fractions from 0 to 1, measured from the image's top-left corner:
+  `left` and `right` of its width, `top` and `bottom` of its height. Use `pixels/3`
+  to scale them to an image of known size.
+
+    * `confidence` - how sure the model is, from 0 to 1, or `nil` when it doesn't say
+
+  There is no "not found" answer: a target that isn't there still gets a box, with
+  low confidence. Ask a `TypeSafe.noul/2` about presence in the same call and ignore
+  the box when that comes back low.
+  """
+
+  defstruct [:top, :bottom, :left, :right, :confidence]
+
+  @type t :: %__MODULE__{
+          top: float(),
+          bottom: float(),
+          left: float(),
+          right: float(),
+          confidence: float() | nil
+        }
+
+  @doc "The box in pixels for an image `width` by `height`, as `{left, top, right, bottom}`."
+  @spec pixels(t(), pos_integer(), pos_integer()) :: {float(), float(), float(), float()}
+  def pixels(%__MODULE__{} = box, width, height) do
+    {box.left * width, box.top * height, box.right * width, box.bottom * height}
+  end
+end
+
 defmodule TypeSafe.Answer do
   @moduledoc false
   # Decodes the wire answers into structs, mapping keys back to what the
   # questions used. Returns {:error, path} naming the first field that is
   # missing or malformed, so a bad response is reported rather than half-read.
 
-  alias TypeSafe.{Choice, ChoiceAnswer, Noul, NoulAnswer, Score, ScoreAnswer}
+  alias TypeSafe.{Box, BoxAnswer, Choice, ChoiceAnswer, Noul, NoulAnswer, Score, ScoreAnswer}
 
   def decode_all(questions, answers) when is_map(answers) do
     Enum.reduce_while(questions, {:ok, %{}}, fn {key, question}, {:ok, acc} ->
@@ -145,6 +177,20 @@ defmodule TypeSafe.Answer do
 
   defp decode(%Score{}, _raw), do: {:error, "type"}
 
+  defp decode(%Box{}, %{"type" => "box"} = raw) do
+    with {:ok, edges} <- fetch(raw, "box", &is_map/1),
+         {:ok, top} <- edge(edges, "top"),
+         {:ok, bottom} <- edge(edges, "bottom"),
+         {:ok, left} <- edge(edges, "left"),
+         {:ok, right} <- edge(edges, "right"),
+         {:ok, confidence} <- optional_number(raw, "confidence") do
+      {:ok,
+       %BoxAnswer{top: top, bottom: bottom, left: left, right: right, confidence: confidence}}
+    end
+  end
+
+  defp decode(%Box{}, _raw), do: {:error, "type"}
+
   # A raw-map question of a type this client predates: hand back the raw answer.
   defp decode(%{}, raw) when is_map(raw), do: {:ok, raw}
   defp decode(%{}, _raw), do: {:error, "type"}
@@ -153,6 +199,22 @@ defmodule TypeSafe.Answer do
     case Map.fetch(raw, field) do
       {:ok, value} -> if valid?.(value), do: {:ok, value}, else: {:error, field}
       :error -> {:error, field}
+    end
+  end
+
+  defp edge(edges, name) do
+    case fetch(edges, name, &is_number/1) do
+      {:ok, value} -> {:ok, value / 1}
+      {:error, field} -> {:error, "box.#{field}"}
+    end
+  end
+
+  # The Python SDK types it `float | None`: a missing confidence is not an error.
+  defp optional_number(raw, field) do
+    case Map.get(raw, field) do
+      nil -> {:ok, nil}
+      value when is_number(value) -> {:ok, value / 1}
+      _other -> {:error, field}
     end
   end
 

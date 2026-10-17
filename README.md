@@ -53,7 +53,7 @@ That is a real response from `jev-1.13.0`.
 
 ```elixir
 def deps do
-  [{:typesafe_ex, "~> 0.1"}]
+  [{:typesafe_ex, "~> 0.2"}]
 end
 ```
 
@@ -66,6 +66,7 @@ It depends on `req`, `jason` and `telemetry`.
 | `TypeSafe.noul/2` | whether a condition holds | `NoulAnswer`: `noul`, the probability of yes |
 | `TypeSafe.choice/2` | which one of a defined set | `ChoiceAnswer`: `choice`, `probabilities`, `confidence` |
 | `TypeSafe.score/2` | how far along ordered levels | `ScoreAnswer`: `score`, `legend`, `probabilities`, `confidence` |
+| `TypeSafe.box/1` | where something is in an [image](#images-and-box-questions) | `BoxAnswer`: `top`, `bottom`, `left`, `right`, `confidence` |
 
 A few details keep answers easy to use from Elixir:
 
@@ -99,6 +100,68 @@ Instructions and descriptions can be maps or lists when structure makes a questi
 clearer. A raw map (`%{"type" => ..., ...}`) is sent as given, and its answer comes
 back raw. That covers question types this client predates.
 
+Malformed questions raise `ArgumentError` before anything is sent. That includes a
+Choice with more than 255 options and a Score with more than 10 levels, which the API
+refuses.
+
+## Images and Box questions
+
+`TypeSafe.box/1` finds something in an image and answers with a box. Images work with
+any question type: a Noul can ask whether a person is in a photo, a Choice what kind
+of document a scan is.
+
+A `TypeSafe.Image` is a PNG or JPEG. It stands in a request by its *reference*, a
+string. Put the image where it belongs in the state or in a question, and pass it in
+`:images`:
+
+```elixir
+photo = TypeSafe.Image.from_file!("kitchen.jpg")
+
+{:ok, response} =
+  TypeSafe.system_one(
+    client,
+    %{photo: photo},
+    %{
+      mug_present: TypeSafe.noul("Is there a coffee mug in `photo`?"),
+      mug: TypeSafe.box("The coffee mug in `photo`")
+    },
+    model: "jev-1.14.0",
+    images: [photo]
+  )
+
+if TypeSafe.NoulAnswer.yes?(response.answers.mug_present) do
+  TypeSafe.BoxAnswer.pixels(response.answers.mug, 1024, 768)
+  #=> {left, top, right, bottom} for a 1024x768 image
+end
+```
+
+- **Box needs `jev-1.14.0` or later**, or the `jev-preview` alias. `jev-latest` stays
+  on `jev-1.13.0` until 1.14 is promoted, and a Box question sent to it is rejected
+  with a plain `400`.
+- **Edges are fractions.** `left` and `right` are fractions of the width, `top` and
+  `bottom` of the height, from the top-left corner. `BoxAnswer.pixels/3` scales them
+  to an image of known size.
+- **A box always comes back.** There is no "not found" answer, so a target that isn't
+  there still gets a box, with low confidence. Ask a Noul about presence in the same
+  call, as above, and ignore the box when it is low. `confidence` can be `nil`, which
+  the API allows.
+- **Images work on `jev-1.13.0` too.** They are billed as input tokens, and each place
+  a reference is used sends another copy of the image.
+- **Reference the image by name or by value.** The state can be `%{photo: photo}` with
+  questions saying `` `photo` ``, or you can interpolate the image into a string:
+  `"the person in #{badge}"`.
+- **Mistakes are caught before sending**, as `ArgumentError`: an image nothing refers
+  to, a reference whose image was never attached, and a Box question with no image.
+  The API would otherwise answer with an opaque `400`, or for the last two, silently
+  answer about text and not the picture.
+- **Limits.** Each side must be 280 to 1568 pixels, a file at most 16 MiB, and the
+  request at most 32 MiB. Images outside that are rejected by the API (`400`, or `413`
+  as `:payload_too_large`), not resized. Rotate pixels upright first: EXIF orientation
+  is ignored. Convert GIF, WebP and HEIC to PNG or JPEG; `TypeSafe.Image` refuses them.
+- **Transport.** Images go as a `multipart/form-data` upload, which the API recommends
+  over base64, and the `TypeSafe-Danger-Zone-Images: true` header it requires is added
+  for you. Images are marked experimental by TypeSafe and may change.
+
 ## Code owns the decision
 
 Ask independent questions together: they share one read of the state and run in
@@ -116,7 +179,19 @@ end
 
 `confidence` measures how concentrated the distribution is. It is not the probability
 that the answer is right. Tune thresholds on your own data, and pin a versioned model
-such as `"jev-1.13.0"` once you have. `jev-latest` moves when a new release ships.
+such as `"jev-1.14.0"` once you have. The aliases move when a new release ships.
+
+| Model | Notes |
+| --- | --- |
+| `jev-1.14.0` | the newest release (14 October 2026); the only one with Box questions |
+| `jev-1.13.0` | the previous release |
+| `jev-latest` | the newest *stable* release; the default. `jev-1.13.0` as of 16 October 2026 |
+| `jev-preview` | the newest release of any kind. `jev-1.14.0` as of 16 October 2026 |
+
+All models take 64k tokens per request and 32k per question. `TypeSafe.models/1` lists
+what the account can send; versioned ids work whether or not they're listed. For a
+state that doesn't fit, `long_context: true` raises both limits to 262k tokens at the
+same price per token, but slower and less accurate.
 
 For many items, run one call per item concurrently:
 
@@ -143,7 +218,8 @@ A missing key doesn't stop `new/1`, so an app can boot without one. Calls then r
 `TypeSafe.configured?/1` tells you which case you are in.
 
 `system_one/4` can override `:model`, `:timeout`, `:retry` and `:headers` per call. It
-also takes `:extra_body` for top-level fields the API adds later.
+also takes `:images` to send [images](#images-and-box-questions), `:long_context` to
+raise the context limits, and `:extra_body` for top-level fields the API adds later.
 
 ## Errors and retries
 
@@ -155,6 +231,7 @@ struct. Each error has a `reason`, the HTTP `status`, the server's `message`, an
 | --- | --- |
 | `:no_api_key` | no key configured; no request made |
 | `:bad_request`, `:authentication`, `:permission_denied`, `:not_found` | 400, 401, 403, 404 |
+| `:payload_too_large` | 413; the request is over 32 MiB, as it can be with images |
 | `:unprocessable_entity` | 422; the message lists each field, as `path: problem` |
 | `:rate_limited`, `:overloaded`, `:server_error`, `:http_error` | 429, 529, other 5xx, anything else |
 | `:timeout`, `:connection` | no response |
@@ -192,7 +269,7 @@ config :my_app, :typesafe, req_options: [plug: {Req.Test, MyApp.TypeSafe}]
 # in a test
 Req.Test.stub(MyApp.TypeSafe, fn conn ->
   Req.Test.json(conn, %{
-    "model" => "jev-1.13.0",
+    "model" => "jev-1.14.0",
     "answers" => %{"billing" => %{"type" => "noul", "noul" => 0.97}},
     "usage" => %{"input_tokens" => 100, "output_tokens" => 10}
   })

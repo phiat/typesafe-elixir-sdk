@@ -7,7 +7,8 @@ defmodule TypeSafe.Error do
 
     * `:no_api_key` - no key was given and `TYPESAFE_API_KEY` is unset; no request was made
     * `:bad_request` (400), `:authentication` (401), `:permission_denied` (403),
-      `:not_found` (404), `:unprocessable_entity` (422), `:rate_limited` (429),
+      `:not_found` (404), `:payload_too_large` (413, a body over 32 MiB, as it can be
+      with images), `:unprocessable_entity` (422), `:rate_limited` (429),
       `:overloaded` (529), `:server_error` (other 5xx), `:http_error` (anything else)
     * `:timeout`, `:connection` - no HTTP response
     * `:invalid_response` - a 2xx whose body is missing a required field; `message`
@@ -24,6 +25,7 @@ defmodule TypeSafe.Error do
           | :authentication
           | :permission_denied
           | :not_found
+          | :payload_too_large
           | :unprocessable_entity
           | :rate_limited
           | :overloaded
@@ -56,6 +58,7 @@ defmodule TypeSafe.Error do
   def reason_for_status(401), do: :authentication
   def reason_for_status(403), do: :permission_denied
   def reason_for_status(404), do: :not_found
+  def reason_for_status(413), do: :payload_too_large
   def reason_for_status(422), do: :unprocessable_entity
   def reason_for_status(429), do: :rate_limited
   def reason_for_status(529), do: :overloaded

@@ -103,12 +103,21 @@ defmodule TypeSafe.Client do
       headers: headers,
       receive_timeout: timeout
     ]
-    |> Kernel.++(if body, do: [json: body], else: [])
+    |> Kernel.++(body_options(body, opts[:multipart]))
     |> Kernel.++(Retry.req_options(retry))
     |> Req.new()
     |> Req.Request.put_private(:typesafe_deadline, deadline)
     |> Req.Request.append_request_steps(typesafe_attempt: &count_attempt/1)
     |> Req.merge(client.req_options)
+  end
+
+  defp body_options(nil, _files), do: []
+  defp body_options(body, nil), do: [json: body]
+
+  # The request JSON is the first part, then one file part per image.
+  defp body_options(body, files) do
+    request = {"request", {Jason.encode_to_iodata!(body), content_type: "application/json"}}
+    [form_multipart: [request | files]]
   end
 
   # Runs before every attempt, retries included: Req re-runs request steps.

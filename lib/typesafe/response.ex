@@ -4,7 +4,7 @@ defmodule TypeSafe.Response do
 
     * `answers` - one answer per question, under the same key the question used. With
       atom keys you can write `response.answers.team.choice`.
-    * `model` - the versioned model that answered, such as `"jev-1.13.0"`, even when
+    * `model` - the versioned model that answered, such as `"jev-1.14.0"`, even when
       the request named an alias like `"jev-latest"`. Log it next to anything you
       store, so a threshold can be traced to the model it was tuned on.
     * `usage` - `%{input_tokens: n, output_tokens: n}`. Only input tokens are billed.
@@ -15,7 +15,11 @@ defmodule TypeSafe.Response do
   defstruct [:model, :answers, :usage, :request_id, :body]
 
   @type answer ::
-          TypeSafe.NoulAnswer.t() | TypeSafe.ChoiceAnswer.t() | TypeSafe.ScoreAnswer.t() | map()
+          TypeSafe.NoulAnswer.t()
+          | TypeSafe.ChoiceAnswer.t()
+          | TypeSafe.ScoreAnswer.t()
+          | TypeSafe.BoxAnswer.t()
+          | map()
   @type t :: %__MODULE__{
           model: String.t(),
           answers: %{(atom() | String.t()) => answer()},

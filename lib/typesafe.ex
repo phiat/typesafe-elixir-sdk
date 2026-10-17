@@ -43,6 +43,8 @@ defmodule TypeSafe do
 
     * `:timeout` - milliseconds to wait for each response (default 10_000)
     * `:retry` - see `TypeSafe.Retry`
+    * `:compression` - `:gzip`, `:zstd` or `false` (the default): compress request
+      bodies of 1 KiB or more. `:zstd` needs Erlang/OTP 28 or later.
     * `:headers` - extra request headers
     * `:req_options` - merged into the `Req` request last, for example
       `[plug: {Req.Test, MyApp.TypeSafe}]` in tests
@@ -168,7 +170,8 @@ defmodule TypeSafe do
   Options:
 
     * `:model` - overrides the client's model for this call
-    * `:timeout`, `:retry`, `:headers` - override the client's for this call
+    * `:timeout`, `:retry`, `:headers`, `:compression` - override the client's for this
+      call
     * `:images` - a list of `TypeSafe.Image` to send with the call. Something in the
       state or the questions has to refer to each one, and every reference has to
       be attached here; otherwise `ArgumentError` is raised before anything is
@@ -196,6 +199,7 @@ defmodule TypeSafe do
         :retry,
         :headers,
         :long_context,
+        :compression,
         images: []
       ])
 
@@ -296,9 +300,12 @@ defmodule TypeSafe do
       |> Enum.map(fn {image, index} ->
         name = Image.part_name(index)
 
-        {name,
-         {image.binary,
-          filename: "#{name}.#{Image.extension(image)}", content_type: Image.content_type(image)}}
+        %{
+          name: name,
+          filename: "#{name}.#{Image.extension(image)}",
+          content_type: Image.content_type(image),
+          data: image.binary
+        }
       end)
 
     opts

@@ -210,6 +210,7 @@ tickets
 | `:model` | `TYPESAFE_DEFAULT_MODEL` | `jev-latest` |
 | `:timeout` | | `10_000` ms per response |
 | `:retry` | | see below |
+| `:compression` | | `false`; or `:gzip`, `:zstd`, [see below](#compression) |
 | `:headers` | | extra request headers |
 | `:req_options` | | merged into the `Req` request last |
 
@@ -217,9 +218,30 @@ A missing key doesn't stop `new/1`, so an app can boot without one. Calls then r
 `{:error, %TypeSafe.Error{reason: :no_api_key}}` without making a request.
 `TypeSafe.configured?/1` tells you which case you are in.
 
-`system_one/4` can override `:model`, `:timeout`, `:retry` and `:headers` per call. It
-also takes `:images` to send [images](#images-and-box-questions), `:long_context` to
-raise the context limits, and `:extra_body` for top-level fields the API adds later.
+`system_one/4` can override `:model`, `:timeout`, `:retry`, `:compression` and `:headers`
+per call. It also takes `:images` to send [images](#images-and-box-questions),
+`:long_context` to raise the context limits, and `:extra_body` for top-level fields the
+API adds later.
+
+## Compression
+
+The API accepts request bodies compressed with gzip or zstd. It pays on large states,
+such as a long document or a chat log, and saves upload time on a slow link. It is off
+unless you ask:
+
+```elixir
+client = TypeSafe.new(compression: :gzip)   # every call; or :zstd
+TypeSafe.system_one(client, state, questions, compression: false)   # override one call
+```
+
+- **Bodies under 1 KiB are sent as they are**, as the official SDKs do. Larger ones
+  get a `Content-Encoding` header.
+- **`:zstd` needs Erlang/OTP 28 or later**, which has it built in. On an older OTP it
+  raises an `ArgumentError` naming the fix; `:gzip` works everywhere.
+- **Retries resend the same compressed bytes.** The body is built and compressed once
+  per call, and handed to `Req` as final bytes.
+- **Requests with images** are compressed whole. The images won't shrink, since PNG
+  and JPEG are already compressed, so it only helps when the state is large text.
 
 ## Errors and retries
 

@@ -4,7 +4,7 @@ defmodule TypeSafe.Client do
   `inspect/1` output.
   """
 
-  alias TypeSafe.{Error, Retry}
+  alias TypeSafe.{Body, Error, Retry}
 
   @version Mix.Project.config()[:version]
   @default_base_url "https://api.typesafe.ai"
@@ -17,6 +17,7 @@ defmodule TypeSafe.Client do
             model: @default_model,
             timeout: @default_timeout,
             retry: %Retry{},
+            compression: false,
             headers: [],
             req_options: []
 
@@ -26,6 +27,7 @@ defmodule TypeSafe.Client do
           model: String.t(),
           timeout: pos_integer(),
           retry: Retry.t(),
+          compression: :gzip | :zstd | false,
           headers: [{String.t(), String.t()}],
           req_options: keyword()
         }
@@ -39,6 +41,7 @@ defmodule TypeSafe.Client do
         :model,
         :timeout,
         :retry,
+        :compression,
         :headers,
         :req_options
       ])
@@ -53,6 +56,7 @@ defmodule TypeSafe.Client do
       model: opts[:model] || env("TYPESAFE_DEFAULT_MODEL") || @default_model,
       timeout: check_timeout!(Keyword.get(opts, :timeout, @default_timeout)),
       retry: Retry.new(Keyword.get(opts, :retry, [])),
+      compression: Body.check_compression!(Keyword.get(opts, :compression, false)),
       headers: Keyword.get(opts, :headers, []),
       req_options: Keyword.get(opts, :req_options, [])
     }
@@ -82,6 +86,8 @@ defmodule TypeSafe.Client do
     retry = if Keyword.has_key?(opts, :retry), do: Retry.new(opts[:retry]), else: client.retry
     timeout = check_timeout!(Keyword.get(opts, :timeout, client.timeout))
     deadline = retry.budget && System.monotonic_time(:millisecond) + retry.budget
+    compression = Body.check_compression!(Keyword.get(opts, :compression, client.compression))
+    payload = Body.encode(body, opts[:multipart], compression)
 
     headers =
       merge_headers([
@@ -91,6 +97,7 @@ defmodule TypeSafe.Client do
           {"x-typesafe-sdk", "typesafe_ex/#{@version}"},
           {"x-typesafe-runtime", runtime()}
         ],
+        payload_headers(payload),
         client.headers,
         Keyword.get(opts, :headers, [])
       ])
@@ -103,7 +110,7 @@ defmodule TypeSafe.Client do
       headers: headers,
       receive_timeout: timeout
     ]
-    |> Kernel.++(body_options(body, opts[:multipart]))
+    |> Kernel.++(if payload, do: [body: payload.data], else: [])
     |> Kernel.++(Retry.req_options(retry))
     |> Req.new()
     |> Req.Request.put_private(:typesafe_deadline, deadline)
@@ -111,13 +118,11 @@ defmodule TypeSafe.Client do
     |> Req.merge(client.req_options)
   end
 
-  defp body_options(nil, _files), do: []
-  defp body_options(body, nil), do: [json: body]
+  defp payload_headers(nil), do: []
 
-  # The request JSON is the first part, then one file part per image.
-  defp body_options(body, files) do
-    request = {"request", {Jason.encode_to_iodata!(body), content_type: "application/json"}}
-    [form_multipart: [request | files]]
+  defp payload_headers(payload) do
+    [{"content-type", payload.content_type}] ++
+      if payload.content_encoding, do: [{"content-encoding", payload.content_encoding}], else: []
   end
 
   # Runs before every attempt, retries included: Req re-runs request steps.

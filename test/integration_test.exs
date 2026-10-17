@@ -97,6 +97,43 @@ defmodule TypeSafe.IntegrationTest do
     assert TypeSafe.NoulAnswer.yes?(response.answers.hello)
   end
 
+  # Bodies under 1 KiB are not compressed, so these pad the state past it.
+  for codec <- [:gzip, :zstd] do
+    @codec codec
+
+    @tag skip:
+           if(
+             codec == :zstd and
+               not (Code.ensure_loaded?(:zstd) and function_exported?(:zstd, :compress, 1)),
+             do: "needs Erlang/OTP 28 or later"
+           )
+    test "accepts #{codec} requests, plain and with an image", %{client: client} do
+      client = %{client | compression: @codec}
+      padding = String.duplicate("Nothing else to report. ", 200)
+
+      response =
+        TypeSafe.system_one!(
+          client,
+          %{ticket: "I was charged twice for my order. Please refund one.", log: padding},
+          %{billing: TypeSafe.noul("Is the ticket about billing?")}
+        )
+
+      assert TypeSafe.NoulAnswer.yes?(response.answers.billing)
+
+      photo = TypeSafe.Image.from_file!(fixture("red-rectangle.png"))
+
+      response =
+        TypeSafe.system_one!(
+          client,
+          %{photo: photo, log: padding},
+          %{red: TypeSafe.noul("Does `photo` contain a red shape?")},
+          images: [photo]
+        )
+
+      assert TypeSafe.NoulAnswer.yes?(response.answers.red)
+    end
+  end
+
   test "a bad key is an authentication error" do
     assert {:error, %TypeSafe.Error{reason: :authentication, status: 401}} =
              TypeSafe.system_one(TypeSafe.new(api_key: "not-a-key"), "text", %{
